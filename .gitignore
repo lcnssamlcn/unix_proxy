@@ -1,0 +1,6 @@
+project.pdf
+
+# binary object folder
+obj
+# executable
+server
