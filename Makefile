@@ -1,7 +1,7 @@
 C = gcc
 CFLAGS = -Wall -O3
 SRCDIR = src
-SRC = server.c
+SRC = server.c HTTPProxyRequest.c
 EXEC = server
 OBJDIR = obj
 OBJ = $(addprefix $(OBJDIR)/,$(SRC:.c=.o))
@@ -15,6 +15,9 @@ make_objdir:
 
 $(OBJDIR)/server.o:
 	$(C) $(CFLAGS) -c $(SRCDIR)/server.c -o $(OBJDIR)/server.o
+
+$(OBJDIR)/HTTPProxyRequest.o:
+	$(C) $(CFLAGS) -c $(SRCDIR)/HTTPProxyRequest.c -o $(OBJDIR)/HTTPProxyRequest.o
 
 .PHONY: clean
 clean:

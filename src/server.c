@@ -2,12 +2,17 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
+#include <netdb.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+
+#include "globals.h"
+#include "HTTPProxyRequest.h"
+// #include "HTTPResponse.h"
 
 /**
  * default server port
@@ -20,7 +25,7 @@
 /**
  * maximum HTTP response length
  */
-#define MAX_RESPONSE_LEN 65536
+#define MAX_BUFFER_LEN 65536
 
 /**
  * server busy error message
@@ -91,17 +96,131 @@ void* request(void* p_t) {
     struct Thread* t = (struct Thread*) p_t;
     printf("Client %d: %s:%d\n", t->id, inet_ntoa(t->client.sin_addr), ntohs(t->client.sin_port));
 
-    char response[MAX_RESPONSE_LEN + 1] = {0};
+    char proxy_request_raw[MAX_BUFFER_LEN + 1] = {0};
 
-    ssize_t response_len = 1;
-    while (response_len) {
-        response_len = recv(t->client_sd, response, MAX_RESPONSE_LEN, 0);
-        if (response_len > 0) {
-            response[MAX_RESPONSE_LEN] = '\0';
-            printf("received\n--------\n%s--------\nfrom %s:%d\n", response, inet_ntoa(t->client.sin_addr), ntohs(t->client.sin_port));
-            memset(response, '\0', MAX_RESPONSE_LEN + 1);
+    ssize_t proxy_request_len = 1;
+    while (proxy_request_len) {
+        proxy_request_len = recv(t->client_sd, proxy_request_raw, MAX_BUFFER_LEN, 0);
+        if (proxy_request_len > 0) {
+            proxy_request_raw[MAX_BUFFER_LEN] = '\0';
+#ifdef DEBUG
+            printf("received\n--------\n%s--------\nfrom %s:%d\n\n", proxy_request_raw, inet_ntoa(t->client.sin_addr), ntohs(t->client.sin_port));
+#endif
+            struct HTTPProxyRequest proxy_request;
+            memset(&proxy_request, '\0', sizeof(struct HTTPProxyRequest));
+            HTTPProxyRequest_construct(proxy_request_raw, &proxy_request);
+            char request[MAX_BUFFER_LEN + 1] = {0};
+            HTTPProxyRequest_to_http_request(&proxy_request, request);
+#ifdef DEBUG
+            printf("sending request to remote server\n--------\n%s--------\n", request);
+#endif
+            struct addrinfo remote_server_hints;
+            struct addrinfo* remote_server_addrinfos;
+            memset(&remote_server_hints, 0, sizeof(struct addrinfo));
+            remote_server_hints.ai_family = AF_INET;
+            remote_server_hints.ai_socktype = SOCK_STREAM;
+            char hostname[MAX_FIELD_LEN] = {0};
+            char protocol[10] = {0};
+            HTTPProxyRequest_get_hostname(&proxy_request, hostname);
+            HTTPProxyRequest_get_protocol(&proxy_request, protocol);
+            int ret;
+            if ((ret = getaddrinfo(hostname, protocol, &remote_server_hints, &remote_server_addrinfos)) != 0) {
+                fprintf(stderr, "Fail to do DNS lookup: %s\n", gai_strerror(ret));
+                close(t->client_sd);
+                unsigned int tid = t->id;
+                free(t); t = NULL; threads[tid] = NULL;
+                num_connections--;
+                exit(1);
+            }
+            int remote_server_sd = 0;
+            for (struct addrinfo* p = remote_server_addrinfos; p != NULL; p = p->ai_next) {
+                if ((remote_server_sd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+                    if (p->ai_next == NULL) {
+                        perror("Fail to create socket to connect to remote server");
+                        close(t->client_sd);
+                        unsigned int tid = t->id;
+                        free(t); t = NULL; threads[tid] = NULL;
+                        num_connections--;
+                        exit(1);
+                    }
+                    else {
+                        continue;
+                    }
+                }
+                if (connect(remote_server_sd, p->ai_addr, p->ai_addrlen) == -1) {
+                    if (p->ai_next == NULL) {
+                        perror("Fail to connect to remote server");
+                        close(remote_server_sd);
+                        close(t->client_sd);
+                        unsigned int tid = t->id;
+                        free(t); t = NULL; threads[tid] = NULL;
+                        num_connections--;
+                        exit(1);
+                    }
+                    else {
+                        close(remote_server_sd);
+                        continue;
+                    }
+                }
+                break;
+            }
+            freeaddrinfo(remote_server_addrinfos);
+
+            ssize_t sent = send(remote_server_sd, request, strlen(request), 0);
+            if (sent > 0) {
+                char response_raw[MAX_BUFFER_LEN + 1] = {0};
+#ifdef DEBUG
+                printf("response:\n--------\n");
+#endif
+                while (1) {
+                    ssize_t recved = recv(remote_server_sd, response_raw, MAX_BUFFER_LEN, 0);
+                    if (recved > 0) {
+                        response_raw[MAX_BUFFER_LEN] = '\0';
+#ifdef DEBUG
+                        printf("%s", response_raw);
+#endif
+                        ssize_t sent2 = send(t->client_sd, response_raw, strlen(response_raw), 0);
+                        if (sent2 == -1) {
+                            perror("Fail to send response body to client browser");
+                            close(remote_server_sd);
+                            close(t->client_sd);
+                            unsigned int tid = t->id;
+                            free(t); t = NULL; threads[tid] = NULL;
+                            num_connections--;
+                            exit(1);
+                        }
+                        memset(response_raw, '\0', MAX_BUFFER_LEN + 1);
+                    }
+                    else if (recved == 0) {
+                        break;
+                    }
+                    else {
+                        perror("Fail to receive HTTP response from remote server");
+                        close(remote_server_sd);
+                        close(t->client_sd);
+                        unsigned int tid = t->id;
+                        free(t); t = NULL; threads[tid] = NULL;
+                        num_connections--;
+                        exit(1);
+                    }
+                }
+#ifdef DEBUG
+                printf("\n--------\n");
+#endif
+            }
+            else if (sent == -1) {
+                perror("Fail to send HTTP proxy request to remote server");
+                close(remote_server_sd);
+                close(t->client_sd);
+                unsigned int tid = t->id;
+                free(t); t = NULL; threads[tid] = NULL;
+                num_connections--;
+                exit(1);
+            }
+            close(remote_server_sd);
+            memset(proxy_request_raw, '\0', MAX_BUFFER_LEN + 1);
         }
-        else if (response_len == -1) {
+        else if (proxy_request_len == -1) {
             perror("Fail to receive message from client");
             close(t->client_sd);
             unsigned int tid = t->id;
