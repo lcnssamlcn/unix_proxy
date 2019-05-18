@@ -19,13 +19,13 @@
  */
 #define SERVER_PORT 3918
 /**
- * maximum number of connections to this server at the same time
+ * maximum number of client-server connections to handle at the same time
  */
 #define MAX_CONNECTIONS 100
 /**
- * maximum HTTP response length
+ * maximum HTTP response/request length
  */
-#define MAX_BUFFER_LEN 65536
+#define MAX_BUFFER_LEN 1024
 
 /**
  * server busy error message
@@ -38,12 +38,24 @@ const char ERR_SERVER_BUSY[] = "Server is busy. Sorry.\n";
 int server_sd = 0;
 
 /**
- * thread 
+ * client thread struct maintaining the state of each client-server connection
  */
 struct Thread {
+    /**
+     * thread
+     */
     pthread_t thread;
+    /**
+     * index in {@link threads}
+     */
     unsigned int id;
+    /**
+     * client's socket descriptor
+     */
     int client_sd;
+    /**
+     * client's IP address
+     */
     struct sockaddr_in client;
 };
 
@@ -168,7 +180,7 @@ void* request(void* p_t) {
 
             ssize_t sent = send(remote_server_sd, request, strlen(request), 0);
             if (sent > 0) {
-                char response_raw[MAX_BUFFER_LEN + 1] = {0};
+                unsigned char response_raw[MAX_BUFFER_LEN + 1] = {0};
 #ifdef DEBUG
                 printf("response:\n--------\n");
 #endif
@@ -179,7 +191,7 @@ void* request(void* p_t) {
 #ifdef DEBUG
                         printf("%s", response_raw);
 #endif
-                        ssize_t sent2 = send(t->client_sd, response_raw, strlen(response_raw), 0);
+                        ssize_t sent2 = send(t->client_sd, response_raw, recved, 0);
                         if (sent2 == -1) {
                             perror("Fail to send response body to client browser");
                             close(remote_server_sd);
