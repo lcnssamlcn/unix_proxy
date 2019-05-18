@@ -1,6 +1,9 @@
 #ifndef _HTTPPROXYREQUEST_H_
 #define _HTTPPROXYREQUEST_H_
 
+#include "globals.h"
+#include "HTTPHeader.h"
+
 /**
  * HTTP proxy request representaiton
  */
@@ -17,6 +20,18 @@ struct HTTPProxyRequest {
      * HTTP version, e.g. "HTTP/1.1"
      */
     char http_ver[10];
+    /**
+     * HTTP headers
+     */
+    struct HTTPHeader headers[100];
+    /**
+     * total number of HTTP headers received
+     */
+    unsigned int num_headers;
+    /**
+     * query string, only available in POST request
+     */
+    char query_string[1024];
 };
 
 extern void HTTPProxyRequest_construct(const char* orig_request, struct HTTPProxyRequest* result);

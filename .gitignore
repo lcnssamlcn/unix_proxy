@@ -5,3 +5,6 @@ lesson
 obj
 # executable
 server
+
+# temp
+*.swp

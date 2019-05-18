@@ -1,6 +1,8 @@
 #include "globals.h"
+#include "HTTPHeader.h"
 #include "HTTPProxyRequest.h"
 #include <string.h>
+#include <stdio.h>
 
 
 /**
@@ -12,6 +14,37 @@ void HTTPProxyRequest_construct(const char* orig_request, struct HTTPProxyReques
     strcpy(result->method, strtok((char*) orig_request, " "));
     strcpy(result->url, strtok(NULL, " "));
     strcpy(result->http_ver, strtok(NULL, "\r\n"));
+    unsigned int num_headers = 0;
+    while (1) {
+        char* line = strtok(NULL, "\r\n");
+        if (line == NULL)
+            break;
+        if (HTTPHeader_is_header(line)) {
+            HTTPHeader_construct(line, &result->headers[num_headers]);
+            // char header_raw[512] = {0};
+            // HTTPHeader_to_string(&result->headers[num_headers], header_raw, 0);
+            // printf("header: %s\n", header_raw);
+            num_headers++;
+        }
+        else {
+            strcpy(result->query_string, line);
+        }
+    }
+    result->num_headers = num_headers;
+}
+
+/**
+ * add header received from client browser to construct a new HTTP request
+ * @param request current <i>HTTPProxyRequest</i> instance
+ * @param header_name header to add
+ * @param result the resulting HTTP request will be saved here
+ */
+void HTTPProxyRequest_add_header(struct HTTPProxyRequest* request, const char* header_name, char* result) {
+    char header_raw[512] = {0};
+    struct HTTPHeader* header = HTTPHeader_find(request->headers, request->num_headers, header_name);
+    if (header != NULL)
+        HTTPHeader_to_string(header, header_raw, 1);
+    strcat(result, header_raw);
 }
 
 /**
@@ -32,7 +65,15 @@ void HTTPProxyRequest_to_http_request(struct HTTPProxyRequest* request, char* re
     strcat(result, "\r\n");
     strcat(result, "Host: ");
     strcat(result, hostname);
-    strcat(result, "\r\n\r\n");
+    strcat(result, "\r\n");
+    if (strcmp(request->method, "POST") == 0) {
+        HTTPProxyRequest_add_header(request, "Content-Type", result);
+        HTTPProxyRequest_add_header(request, "Content-Length", result);
+        strcat(result, "\r\n");
+        strcat(result, request->query_string);
+    }
+    else
+        strcat(result, "\r\n");
 }
 
 /**
