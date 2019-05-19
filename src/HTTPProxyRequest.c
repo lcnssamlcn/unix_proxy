@@ -2,6 +2,7 @@
 #include "HTTPHeader.h"
 #include "HTTPProxyRequest.h"
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 
@@ -9,11 +10,23 @@
  * constructor of <i>HTTPProxyRequest</i>
  * @param orig_request original raw HTTP request
  * @param result the new <i>HTTPProxyRequest</i> instance will be saved here
+ * @return 1 if the <i>orig_request</i> is valid; 0 otherwise
  */
-void HTTPProxyRequest_construct(const char* orig_request, struct HTTPProxyRequest* result) {
-    strcpy(result->method, strtok((char*) orig_request, " "));
-    strcpy(result->url, strtok(NULL, " "));
-    strcpy(result->http_ver, strtok(NULL, "\r\n"));
+int HTTPProxyRequest_construct(const char* orig_request, struct HTTPProxyRequest* result) {
+    char* orig_request_copy = malloc(sizeof(char) * (strlen(orig_request) + 1));
+    strcpy(orig_request_copy, orig_request);
+    char* token = strtok(orig_request_copy, " ");
+    if (token == NULL)
+        return 0;
+    strcpy(result->method, token);
+    token = strtok(NULL, " ");
+    if (token == NULL)
+        return 0;
+    strcpy(result->url, token);
+    token = strtok(NULL, "\r\n");
+    if (token == NULL)
+        return 0;
+    strcpy(result->http_ver, token);
     unsigned int num_headers = 0;
     while (1) {
         char* line = strtok(NULL, "\r\n");
@@ -31,6 +44,8 @@ void HTTPProxyRequest_construct(const char* orig_request, struct HTTPProxyReques
         }
     }
     result->num_headers = num_headers;
+    free(orig_request_copy); orig_request_copy = NULL;
+    return 1;
 }
 
 /**
@@ -53,19 +68,33 @@ void HTTPProxyRequest_add_header(struct HTTPProxyRequest* request, const char* h
  * @param result the resulting HTTP request will be saved here
  */
 void HTTPProxyRequest_to_http_request(struct HTTPProxyRequest* request, char* result) {
-    char rel_uri[MAX_FIELD_LEN] = {0};
-    char hostname[MAX_FIELD_LEN] = {0};
-    HTTPProxyRequest_get_rel_uri(request, rel_uri);
-    HTTPProxyRequest_get_hostname(request, hostname);
     strcpy(result, request->method);
     strcat(result, " ");
-    strcat(result, rel_uri);
+    if (strcmp(request->method, "CONNECT") == 0) {
+        strcat(result, request->url);
+    }
+    else {
+        char rel_uri[MAX_FIELD_LEN] = {0};
+        HTTPProxyRequest_get_rel_uri(request, rel_uri);
+        strcat(result, rel_uri);
+    }
     strcat(result, " ");
     strcat(result, request->http_ver);
     strcat(result, "\r\n");
-    strcat(result, "Host: ");
-    strcat(result, hostname);
-    strcat(result, "\r\n");
+    HTTPProxyRequest_add_header(request, "Host", result);
+    if (strcmp(request->method, "CONNECT") == 0) {
+        strcat(result, "Connection: ");
+        struct HTTPHeader* header = HTTPHeader_find(request->headers, request->num_headers, "Proxy-Connection");
+        if (header != NULL) {
+            strcat(result, header->value);
+            strcat(result, "\r\n");
+        }
+        else
+            HTTPProxyRequest_add_header(request, "Connection", result);
+    }
+    else {
+        HTTPProxyRequest_add_header(request, "Connection", result);
+    }
     if (strcmp(request->method, "POST") == 0) {
         HTTPProxyRequest_add_header(request, "Content-Type", result);
         HTTPProxyRequest_add_header(request, "Content-Length", result);
@@ -82,7 +111,10 @@ void HTTPProxyRequest_to_http_request(struct HTTPProxyRequest* request, char* re
  * @param the resulting protocol will be saved here
  */
 void HTTPProxyRequest_get_protocol(struct HTTPProxyRequest* request, char* result) {
-    strncpy(result, request->url, strchr(request->url, ':') - request->url);
+    if (strcmp(request->method, "CONNECT") == 0)
+        strcpy(result, "https");
+    else
+        strcpy(result, "http");
 }
 
 /**
@@ -91,9 +123,14 @@ void HTTPProxyRequest_get_protocol(struct HTTPProxyRequest* request, char* resul
  * @param the resulting hostname will be saved here
  */
 void HTTPProxyRequest_get_hostname(struct HTTPProxyRequest* request, char* result) {
-    char* hostname_start = strchr(request->url, ':') + 3;
-    char* uri_start = strchr(hostname_start, '/');
-    strncpy(result, hostname_start, uri_start - hostname_start);
+    struct HTTPHeader* host = HTTPHeader_find(request->headers, request->num_headers, "Host");
+    if (host != NULL) {
+        char* port = strchr(host->value, ':');
+        if (port != NULL)
+            strncpy(result, host->value, port - host->value);
+        else
+            strcpy(result, host->value);
+    }
 }
 
 /**

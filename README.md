@@ -1,8 +1,14 @@
 # UNIX Web Proxy Server
 
-## How to build the server?
+## Build the server
 
 ```shell
 make clean
 make 
+```
+
+## Run the server
+
+```shell
+./server
 ```

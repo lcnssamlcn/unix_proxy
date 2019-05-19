@@ -34,7 +34,7 @@ struct HTTPProxyRequest {
     char query_string[1024];
 };
 
-extern void HTTPProxyRequest_construct(const char* orig_request, struct HTTPProxyRequest* result);
+extern int HTTPProxyRequest_construct(const char* orig_request, struct HTTPProxyRequest* result);
 extern void HTTPProxyRequest_to_http_request(struct HTTPProxyRequest* request, char* result);
 extern void HTTPProxyRequest_get_protocol(struct HTTPProxyRequest* request, char* result);
 extern void HTTPProxyRequest_get_hostname(struct HTTPProxyRequest* request, char* result);
