@@ -12,3 +12,9 @@ make
 ```shell
 ./server
 ```
+
+## Features
+
+- multi-threading
+- HTTP forwarding support
+- HTTPS forwarding support

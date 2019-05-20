@@ -103,10 +103,19 @@ void close_server(int status) {
 }
 
 /**
- * event handler for SIGINT
+ * event handler for software interrupts
  */
-void SIGINT_handler(int signum) {
-    close_server(0);
+void signal_handler(int signum) {
+    switch (signum) {
+        case SIGINT:
+            close_server(0);
+            break;
+        case SIGPIPE:
+#ifdef DEBUG
+            printf("recved SIGPIPE\n");
+#endif
+            break;
+    }
 }
 
 /**
@@ -344,7 +353,8 @@ void* request(void* p_t) {
 }
 
 int main() {
-    signal(SIGINT, SIGINT_handler);
+    signal(SIGINT, signal_handler);
+    signal(SIGPIPE, signal_handler);
 
     for (int i = 0; i < MAX_CONNECTIONS; i++) {
         threads[i] = NULL;
