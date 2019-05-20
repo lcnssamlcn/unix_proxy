@@ -14,24 +14,17 @@
 #include "globals.h"
 #include "HTTPProxyRequest.h"
 #include "HTTPProxyResponse.h"
+#include "err_doc.h"
+#include "utilities.h"
 
 /**
  * default server port
  */
-#define SERVER_PORT 3918
+#define DEFAULT_SERVER_PORT 3918
 /**
  * maximum number of client-server connections to handle at the same time
  */
-#define MAX_CONNECTIONS 500
-/**
- * maximum HTTP response/request length
- */
-#define MAX_BUFFER_LEN 16384
-
-/**
- * server busy error message
- */
-const char ERR_SERVER_BUSY[] = "Server is busy. Sorry.\n";
+#define MAX_CONNECTIONS 1000
 
 /**
  * server socket descriptor
@@ -112,7 +105,7 @@ void signal_handler(int signum) {
             break;
         case SIGPIPE:
 #ifdef DEBUG
-            printf("recved SIGPIPE\n");
+            fprintf(stderr, "recved SIGPIPE\n");
 #endif
             break;
     }
@@ -137,10 +130,32 @@ void deallocate_thread(struct Thread* t, int client_sd, int remote_server_sd) {
 }
 
 /**
+ * send an error response to the client to indicate an error has occurred
+ * @param client_sd client socket descriptor
+ * @param http_ver HTTP version of the error response. If it is passed as NULL, "HTTP/1.0" will be used.
+ * @param status_code HTTP error status code to send
+ * @param desc description of the error. It should be in HTML string format. See {@link ERR_DOC_DESC} for examples.
+ *             You can pass NULL to use the default error description based on status code defined in {@link ERR_DOC_DESC}.
+ */
+void send_err_response(int client_sd, const char* http_ver, const int status_code, const char* desc) {
+    struct HTTPProxyResponse response;
+    HTTPProxyResponse_construct_err_response(http_ver, status_code, &response);
+    char response_raw[MAX_BUFFER_LEN + 1] = {0};
+    HTTPProxyResponse_write_headers(&response, response_raw);
+    HTTPProxyResponse_write_err_payload(&response, desc, response_raw);
+#ifdef DEBUG
+    printf("sending error response\n--------\n%s---------\n", response_raw);
+#endif
+    send(client_sd, response_raw, strlen(response_raw), 0);
+}
+
+/**
  * connect to the remote server
  * @param t client-server thread who wants to initiate the connection to the remote server
  * @param hostname hostname of the remote server (without port), e.g. "www.example.com"
  * @param protocol internet protocol to use, e.g. "http", "https"
+ * @return non-zero remote server socket descriptor if success. Otherwise, return -1 to indicate failure of creating 
+ *         remote server socket.
  */
 int connect_remote_server(struct Thread* t, const char* hostname, const char* protocol) {
     struct addrinfo remote_server_hints;
@@ -148,13 +163,30 @@ int connect_remote_server(struct Thread* t, const char* hostname, const char* pr
     memset(&remote_server_hints, 0, sizeof(struct addrinfo));
     remote_server_hints.ai_family = AF_INET;
     remote_server_hints.ai_socktype = SOCK_STREAM;
-#ifdef DEBUG
-    printf("--------\nhostname: %s\nprotocol: %s\n--------\n", hostname, protocol);
-#endif
 
     int ret;
     if ((ret = getaddrinfo(hostname, protocol, &remote_server_hints, &remote_server_addrinfos)) != 0) {
         fprintf(stderr, "Fail to do DNS lookup: %s\n", gai_strerror(ret));
+        switch (ret) {
+            case EAI_AGAIN:
+                send_err_response(t->client_sd, NULL, 503, "<p>DNS server fails to do lookup temporarily. Please refresh the webpage or try again later.</p>\n");
+                break;
+            case EAI_FAIL:
+                send_err_response(t->client_sd, NULL, 503, "<p>DNS server fails to do lookup. Your DNS server may be broken.</p>\n");
+                break;
+            case EAI_MEMORY:
+                send_err_response(t->client_sd, NULL, 500, NULL);
+                break;
+            case EAI_NODATA:
+                send_err_response(t->client_sd, NULL, 502, NULL);
+                break;
+            case EAI_NONAME:
+                send_err_response(t->client_sd, NULL, 404, NULL);
+                break;
+            default:
+                send_err_response(t->client_sd, NULL, 500, NULL);
+                break;
+        }
         deallocate_thread(t, t->client_sd, -1);
     }
     int remote_server_sd = 0;
@@ -162,6 +194,7 @@ int connect_remote_server(struct Thread* t, const char* hostname, const char* pr
         if ((remote_server_sd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
             if (p->ai_next == NULL) {
                 perror("Fail to create socket to connect to remote server");
+                send_err_response(t->client_sd, NULL, 500, NULL);
                 deallocate_thread(t, t->client_sd, -1);
             }
             else {
@@ -171,6 +204,7 @@ int connect_remote_server(struct Thread* t, const char* hostname, const char* pr
         if (connect(remote_server_sd, p->ai_addr, p->ai_addrlen) == -1) {
             if (p->ai_next == NULL) {
                 perror("Fail to connect to remote server");
+                send_err_response(t->client_sd, NULL, 502, NULL);
                 deallocate_thread(t, t->client_sd, remote_server_sd);
             }
             else {
@@ -284,7 +318,7 @@ void forward_HTTPS(struct Thread* t, int remote_server_sd, char* http_ver) {
     strcpy(proxy_response.http_ver, http_ver);
     strcpy(proxy_response.status, "200");
     strcpy(proxy_response.phrase, "Connection established");
-    HTTPProxyResponse_to_string(&proxy_response, proxy_response_raw);
+    HTTPProxyResponse_write_headers(&proxy_response, proxy_response_raw);
 #ifdef DEBUG
     printf("proxy response to client %s:%d\n--------\n%s--------\n", inet_ntoa(t->client.sin_addr), ntohs(t->client.sin_port), proxy_response_raw);
 #endif
@@ -352,7 +386,7 @@ void* request(void* p_t) {
     return 0;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     signal(SIGINT, signal_handler);
     signal(SIGPIPE, signal_handler);
 
@@ -372,7 +406,20 @@ int main() {
     struct sockaddr_in server;
     socklen_t saddr_len = sizeof(struct sockaddr_in);
     server.sin_family = AF_INET;
-    server.sin_port = htons(SERVER_PORT);
+    int port = DEFAULT_SERVER_PORT;
+    if (argc == 2 && is_uint(argv[1])) {
+        port = atoi(argv[1]);
+        if (port <= 1024) {
+            fprintf(stderr, "Unable to use reserved port %d\n", port);
+            return 1;
+        }
+        if (port > 65535) {
+            fprintf(stderr, "port %d is out of range\n", port);
+            return 1;
+        }
+    }
+    server.sin_port = htons(port);
+    printf("using port %d...\n", port);
     server.sin_addr.s_addr = INADDR_ANY;
     memset(server.sin_zero, '0', 8);
 
@@ -399,7 +446,7 @@ int main() {
 
         num_connections++;
         if (num_connections > MAX_CONNECTIONS) {
-            send(client_sd, ERR_SERVER_BUSY, strlen(ERR_SERVER_BUSY), 0);
+            send_err_response(client_sd, NULL, 503, NULL);
             close(client_sd);
             num_connections--;
             continue;

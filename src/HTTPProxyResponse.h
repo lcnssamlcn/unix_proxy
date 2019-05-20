@@ -19,6 +19,8 @@ struct HTTPProxyResponse {
     char phrase[100];
 };
 
-extern void HTTPProxyResponse_to_string(struct HTTPProxyResponse* response, char* result);
+extern void HTTPProxyResponse_construct_err_response(const char* http_ver, const int status_code, struct HTTPProxyResponse* result);
+extern void HTTPProxyResponse_write_headers(struct HTTPProxyResponse* response, char* result);
+extern void HTTPProxyResponse_write_err_payload(struct HTTPProxyResponse* response, const char* desc, char* result);
 
 #endif

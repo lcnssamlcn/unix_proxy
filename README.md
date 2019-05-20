@@ -10,8 +10,10 @@ make
 ## Run the server
 
 ```shell
-./server
+./server [port]
 ```
+
+`port`: port number to bind the server at. If it is not provided, it will be `3918` by default.
 
 ## Features
 
