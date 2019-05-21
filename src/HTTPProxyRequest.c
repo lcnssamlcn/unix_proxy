@@ -94,6 +94,7 @@ void HTTPProxyRequest_to_http_request(struct HTTPProxyRequest* request, char* re
     }
     else {
         HTTPProxyRequest_add_header(request, "Connection", result);
+        HTTPProxyRequest_add_header(request, "Authorization", result);
     }
     if (strcmp(request->method, "POST") == 0) {
         HTTPProxyRequest_add_header(request, "Content-Type", result);
