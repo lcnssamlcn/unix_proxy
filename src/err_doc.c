@@ -1,7 +1,6 @@
 #include "globals.h"
 #include "err_doc.h"
 #include <string.h>
-#include <stdio.h>
 
 
 /**

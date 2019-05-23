@@ -3,7 +3,6 @@
 #include "HTTPProxyRequest.h"
 #include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
 
 
 /**
@@ -55,11 +54,12 @@ int HTTPProxyRequest_construct(const char* orig_request, struct HTTPProxyRequest
  * @param result the resulting HTTP request will be saved here
  */
 void HTTPProxyRequest_add_header(struct HTTPProxyRequest* request, const char* header_name, char* result) {
-    char header_raw[512] = {0};
     struct HTTPHeader* header = HTTPHeader_find(request->headers, request->num_headers, header_name);
-    if (header != NULL)
+    if (header != NULL) {
+        char header_raw[512] = {0};
         HTTPHeader_to_string(header, header_raw, 1);
-    strcat(result, header_raw);
+        strcat(result, header_raw);
+    }
 }
 
 /**
@@ -95,6 +95,7 @@ void HTTPProxyRequest_to_http_request(struct HTTPProxyRequest* request, char* re
     else {
         HTTPProxyRequest_add_header(request, "Connection", result);
         HTTPProxyRequest_add_header(request, "Authorization", result);
+        HTTPProxyRequest_add_header(request, "If-Modified-Since", result);
     }
     if (strcmp(request->method, "POST") == 0) {
         HTTPProxyRequest_add_header(request, "Content-Type", result);
