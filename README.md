@@ -22,3 +22,7 @@ make
 - HTTPS forwarding support
 - HTTP caching
 - responding with correct status code when error occurs, e.g. return 404 if the resource is not found
+
+## TODO
+
+- synchronize `num_connections`
